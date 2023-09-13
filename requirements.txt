@@ -1,0 +1,10 @@
+transformers==4.5.1
+scipy==1.9.3
+scikit-image==0.21.0
+ipython==8.6.0
+numpy==1.23.5
+tqdm==4.64.1
+gym==0.23.1
+opencv-python==4.7.0.72
+matplotlib==3.6.2
+packaging==21.3

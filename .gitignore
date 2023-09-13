@@ -1,0 +1,13 @@
+datasets/
+figs/
+models/
+batches/
+backup/
+out/
+*.pt
+*.png
+*.pyc
+*.pdf
+__pycache__
+*.pt
+*.pkl
