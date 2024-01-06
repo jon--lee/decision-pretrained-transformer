@@ -19,6 +19,8 @@ from net import Transformer, ImageTransformer
 from utils import (
     build_bandit_data_filename,
     build_bandit_model_filename,
+    build_linear_bandit_data_filename,
+    build_linear_bandit_model_filename,
     build_darkroom_data_filename,
     build_darkroom_model_filename,
     build_miniworld_data_filename,
@@ -63,6 +65,7 @@ if __name__ == '__main__':
     cov = args['cov']
     num_epochs = args['num_epochs']
     seed = args['seed']
+    lin_d = args['lin_d']
     
     tmp_seed = seed
     if seed == -1:
@@ -78,7 +81,8 @@ if __name__ == '__main__':
     np.random.seed(tmp_seed)
     random.seed(tmp_seed)
 
-
+    if shuffle and env == 'linear_bandit':
+        raise Exception("Are you sure you want to shuffle on the linear bandit? Data collected from an adaptive algorithm in a stochastic setting can bias the learner if shuffled.")
 
     dataset_config = {
         'n_hists': n_hists,
@@ -123,6 +127,18 @@ if __name__ == '__main__':
 
         model_config.update({'var': var, 'cov': cov})
         filename = build_bandit_model_filename(env, model_config)
+
+    elif env == 'linear_bandit':
+        state_dim = 1
+
+        dataset_config.update({'lin_d': lin_d, 'var': var, 'cov': cov})
+        path_train = build_linear_bandit_data_filename(
+            env, n_envs, dataset_config, mode=0)
+        path_test = build_linear_bandit_data_filename(
+            env, n_envs, dataset_config, mode=1)
+
+        model_config.update({'lin_d': lin_d, 'var': var, 'cov': cov})
+        filename = build_linear_bandit_model_filename(env, model_config)
 
     elif env.startswith('darkroom'):
         state_dim = 2
@@ -200,6 +216,7 @@ if __name__ == '__main__':
         # Write the same output to the log file
         with open(log_filename, 'a') as f:
             print(string, file=f)
+
 
 
 
@@ -293,7 +310,7 @@ if __name__ == '__main__':
 
 
         # LOGGING
-        if (epoch + 1) % 50 == 0:
+        if (epoch + 1) % 50 == 0 or (env == 'linear_bandit' and (epoch + 1) % 10 == 0):
             torch.save(model.state_dict(),
                        f'models/{filename}_epoch{epoch+1}.pt')
 

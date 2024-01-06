@@ -7,11 +7,13 @@ import torch
 from IPython import embed
 
 import common_args
-from evals import eval_bandit, eval_darkroom
+from evals import eval_bandit, eval_linear_bandit, eval_darkroom
 from net import Transformer, ImageTransformer
 from utils import (
     build_bandit_data_filename,
     build_bandit_model_filename,
+    build_linear_bandit_data_filename,
+    build_linear_bandit_model_filename,
     build_darkroom_data_filename,
     build_darkroom_model_filename,
     build_miniworld_data_filename,
@@ -55,6 +57,7 @@ if __name__ == '__main__':
     horizon = args['hor']
     n_eval = args['n_eval']
     seed = args['seed']
+    lin_d = args['lin_d']
     
     tmp_seed = seed
     if seed == -1:
@@ -96,6 +99,11 @@ if __name__ == '__main__':
         model_config.update({'var': var, 'cov': cov})
         filename = build_bandit_model_filename(envname, model_config)
         bandit_type = 'bernoulli'
+    elif envname == 'linear_bandit':
+        state_dim = 1
+
+        model_config.update({'lin_d': lin_d, 'var': var, 'cov': cov})
+        filename = build_linear_bandit_model_filename(envname, model_config)
     elif envname.startswith('darkroom'):
         state_dim = 2
         action_dim = 5
@@ -151,6 +159,11 @@ if __name__ == '__main__':
         eval_filepath = build_bandit_data_filename(
             envname, n_eval, dataset_config, mode=2)
         save_filename = f'{filename}_testcov{test_cov}_hor{horizon}.pkl'
+    elif envname in ['linear_bandit']:
+        dataset_config.update({'lin_d': lin_d, 'var': var, 'cov': cov})
+        eval_filepath = build_linear_bandit_data_filename(
+            envname, n_eval, dataset_config, mode=2)
+        save_filename = f'{filename}_testcov{test_cov}_hor{horizon}.pkl'
     elif envname in ['darkroom_heldout', 'darkroom_permuted']:
         dataset_config.update({'rollin_type': 'uniform'})
         eval_filepath = build_darkroom_data_filename(
@@ -203,7 +216,30 @@ if __name__ == '__main__':
         plt.savefig(f'figs/{evals_filename}/graph/{save_filename}_graph.png')
         plt.clf()
         
-        
+    elif envname == 'linear_bandit':
+        config = {
+            'horizon': horizon,
+            'var': var,
+            'n_eval': n_eval,
+        }
+
+        with open(eval_filepath, 'rb') as f:
+            eval_trajs = pickle.load(f)
+
+        eval_linear_bandit.online(eval_trajs, model, **config)
+        plt.savefig(f'figs/{evals_filename}/online/{save_filename}.png')
+        plt.clf()
+        plt.cla()
+        plt.close()
+
+        eval_linear_bandit.offline(eval_trajs, model, **config)
+        plt.savefig(f'figs/{evals_filename}/bar/{save_filename}_bar.png')
+        plt.clf()
+
+        eval_linear_bandit.offline_graph(eval_trajs, model, **config)
+        plt.savefig(f'figs/{evals_filename}/graph/{save_filename}_graph.png')
+        plt.clf()
+
 
 
     elif envname in ['darkroom_heldout', 'darkroom_permuted']:

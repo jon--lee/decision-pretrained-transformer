@@ -13,7 +13,7 @@ done
 
 
 # Train
-python3 train.py --env miniworld --envs 60000 --H 50 --lr 0.0001 --layer 4 --head 4 --shuffle --seed 1
+python3 train.py --env miniworld --envs 60000 --H 50 --lr 0.0001 --layer 4 --head 4 --shuffle
 
 # Evaluate, choose an appropriate epoch
-xvfb-run -a -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" python3 eval.py --env miniworld --envs 60000 --H 50 --lr 0.0001 --layer 4 --head 4 --shuffle --epoch 200 --seed 1
+xvfb-run -a -s "-screen 0 1024x768x24 -ac +extension GLX +render -noreset" python3 eval.py --env miniworld --envs 60000 --H 50 --lr 0.0001 --layer 4 --head 4 --shuffle --epoch 200

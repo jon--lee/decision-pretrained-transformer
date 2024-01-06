@@ -18,6 +18,13 @@ def sample(dim, H, var, type='uniform'):
     return env
 
 
+def sample_linear(arms, H, var):
+    lin_d = arms.shape[1]
+    theta = np.random.normal(0, 1, lin_d) / np.sqrt(lin_d)
+    env = LinearBanditEnv(theta, arms, H, var=var)
+    return env
+
+
 class BanditEnv(BaseEnv):
     def __init__(self, means, H, var=0.0, type='uniform'):
         opt_a_index = np.argmax(means)
@@ -145,3 +152,46 @@ class BanditEnvVec(BaseEnv):
         values = [np.sum(env.means * u) for env, u in zip(self._envs, us)]
         return np.array(values)
 
+
+
+
+class LinearBanditEnv(BanditEnv):
+    def __init__(self, theta, arms, H, var=0.0):
+        self.theta = theta
+        self.arms = arms
+        self.means = arms @ theta
+        self.opt_a_index = np.argmax(self.means)
+        self.opt_a = np.zeros(self.means.shape)
+        self.opt_a[self.opt_a_index] = 1.0
+        self.dim = len(self.means)
+        self.observation_space = gym.spaces.Box(low=1, high=1, shape=(1,))
+        self.action_space = gym.spaces.Box(low=0, high=1, shape=(self.dim,))
+        self.state = np.array([1])
+        self.var = var
+        self.dx = 1
+        self.du = self.dim
+        
+        self.H_context = H
+        self.H = 1
+
+    def get_arm_value(self, u):
+        return np.sum(self.means * u)
+
+    def reset(self):
+        self.current_step = 0
+        return self.state
+
+    def transit(self, x, u):
+        a = np.argmax(u)
+        r = self.means[a] + np.random.normal(0, self.var)
+        return self.state.copy(), r
+
+    def step(self, action):
+        if self.current_step >= self.H:
+            raise ValueError("Episode has already ended")
+
+        _, r = self.transit(self.state, action)
+        self.current_step += 1
+        done = (self.current_step >= self.H)
+
+        return self.state.copy(), r, done, {}

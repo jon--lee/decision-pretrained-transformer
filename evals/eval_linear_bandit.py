@@ -8,14 +8,12 @@ from IPython import embed
 
 from ctrls.ctrl_bandit import (
     BanditTransformerController,
-    GreedyOptPolicy,
     EmpMeanPolicy,
     OptPolicy,
-    PessMeanPolicy,
     ThompsonSamplingPolicy,
-    UCBPolicy,
+    LinUCBPolicy,
 )
-from envs.bandit_env import BanditEnv, BanditEnvVec
+from envs.bandit_env import BanditEnv, BanditEnvVec, LinearBanditEnv
 from utils import convert_to_tensor
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -55,10 +53,6 @@ def deploy_online(env, controller, horizon):
 
 def deploy_online_vec(vec_env, controller, horizon, include_meta=False):
     num_envs = vec_env.num_envs
-    # context_states = torch.zeros((num_envs, horizon, vec_env.dx)).float().to(device)
-    # context_actions = torch.zeros((num_envs, horizon, vec_env.du)).float().to(device)
-    # context_next_states = torch.zeros((num_envs, horizon, vec_env.dx)).float().to(device)
-    # context_rewards = torch.zeros((num_envs, horizon, 1)).float().to(device)
 
     context_states = np.zeros((num_envs, horizon, vec_env.dx))
     context_actions = np.zeros((num_envs, horizon, vec_env.du))
@@ -104,7 +98,7 @@ def deploy_online_vec(vec_env, controller, horizon, include_meta=False):
 
 
 
-def online(eval_trajs, model, n_eval, horizon, var, bandit_type):
+def online(eval_trajs, model, n_eval, horizon, var):
 
     all_means = {}
 
@@ -115,7 +109,7 @@ def online(eval_trajs, model, n_eval, horizon, var, bandit_type):
         means = traj['means']
 
         # TODO: Does bandit type need to be passed in?
-        env = BanditEnv(means, horizon, var=var)
+        env = LinearBanditEnv(traj['theta'], traj['arms'], horizon, var=var)
         envs.append(env)
 
     vec_env = BanditEnvVec(envs)
@@ -137,35 +131,29 @@ def online(eval_trajs, model, n_eval, horizon, var, bandit_type):
     all_means['Lnr'] = cum_means
 
 
-    controller = EmpMeanPolicy(
-        envs[0],
-        online=True,
-        batch_size=len(envs))
-    cum_means = deploy_online_vec(vec_env, controller, horizon).T
-    assert cum_means.shape[0] == n_eval
-    all_means['Emp'] = cum_means
-
-    controller = UCBPolicy(
-        envs[0],
-        const=1.0,
-        batch_size=len(envs))
-    cum_means = deploy_online_vec(vec_env, controller, horizon).T
-    assert cum_means.shape[0] == n_eval
-    all_means['UCB1.0'] = cum_means
 
     controller = ThompsonSamplingPolicy(
         envs[0],
         std=var,
         sample=True,
-        prior_mean=0.5,
-        prior_var=1/12.0,
+        prior_mean=0.0,
+        prior_var=1.0,
         warm_start=False,
         batch_size=len(envs))
     cum_means = deploy_online_vec(vec_env, controller, horizon).T
     assert cum_means.shape[0] == n_eval
     all_means['Thomp'] = cum_means
 
+    controller = LinUCBPolicy(
+        envs[0],
+        const=1.0,
+        batch_size=len(envs)
+    )
+    cum_means = deploy_online_vec(vec_env, controller, horizon).T
+    assert cum_means.shape[0] == n_eval
+    all_means['LinUCB'] = cum_means
 
+    
     all_means = {k: np.array(v) for k, v in all_means.items()}
     all_means_diff = {k: all_means['opt'] - v for k, v in all_means.items()}
 
@@ -211,7 +199,7 @@ def online(eval_trajs, model, n_eval, horizon, var, bandit_type):
 
 
 
-def offline(eval_trajs, model, n_eval, horizon, var, bandit_type):
+def offline(eval_trajs, model, n_eval, horizon, var):
     all_rs_lnr = []
     all_rs_greedy = []
     all_rs_opt = []
@@ -221,7 +209,8 @@ def offline(eval_trajs, model, n_eval, horizon, var, bandit_type):
 
     num_envs = len(eval_trajs)
 
-    tmp_env = BanditEnv(eval_trajs[0]['means'], horizon, var=var)
+    # tmp_env = LinearBanditEnv(eval_trajs[0]['means'], horizon, var=var)
+    tmp_env = LinearBanditEnv(eval_trajs[0]['theta'], eval_trajs[0]['arms'], horizon, var=var)
     context_states = np.zeros((num_envs, horizon, tmp_env.dx))
     context_actions = np.zeros((num_envs, horizon, tmp_env.du))
     context_next_states = np.zeros((num_envs, horizon, tmp_env.dx))
@@ -238,7 +227,7 @@ def offline(eval_trajs, model, n_eval, horizon, var, bandit_type):
         means = traj['means']
 
         # TODO: Does bandit type need to be passed in?
-        env = BanditEnv(means, horizon, var=var)
+        env = LinearBanditEnv(traj['theta'], traj['arms'], horizon, var=var)
         envs.append(env)
 
         context_states[i_eval, :, :] = traj['context_states'][:horizon]
@@ -256,41 +245,37 @@ def offline(eval_trajs, model, n_eval, horizon, var, bandit_type):
     }
 
     opt_policy = OptPolicy(envs, batch_size=num_envs)
-    emp_policy = EmpMeanPolicy(envs[0], online=False, batch_size=num_envs)
     lnr_policy = BanditTransformerController(model, sample=False, batch_size=num_envs)
     thomp_policy = ThompsonSamplingPolicy(
         envs[0],
         std=var,
         sample=False,
-        prior_mean=0.5,
-        prior_var=1/12.0,
+        prior_mean=0,
+        prior_var=1.0,
         warm_start=False,
         batch_size=num_envs)
-    lcb_policy = PessMeanPolicy(
+    linreg_policy = LinUCBPolicy(
         envs[0],
-        const=.8,
-        batch_size=len(envs))
-
+        const=0.0,
+        batch_size=num_envs
+    )
 
     opt_policy.set_batch_numpy_vec(batch)
-    emp_policy.set_batch_numpy_vec(batch)
     thomp_policy.set_batch_numpy_vec(batch)
-    lcb_policy.set_batch_numpy_vec(batch)
     lnr_policy.set_batch_numpy_vec(batch)
+    linreg_policy.set_batch_numpy_vec(batch)
     
     _, _, _, rs_opt = vec_env.deploy_eval(opt_policy)
-    _, _, _, rs_emp = vec_env.deploy_eval(emp_policy)
     _, _, _, rs_lnr = vec_env.deploy_eval(lnr_policy)
-    _, _, _, rs_lcb = vec_env.deploy_eval(lcb_policy)
     _, _, _, rs_thmp = vec_env.deploy_eval(thomp_policy)
+    _, _, _, rs_linreg = vec_env.deploy_eval(linreg_policy)
 
 
     baselines = {
         'opt': np.array(rs_opt),
         'lnr': np.array(rs_lnr),
-        'emp': np.array(rs_emp),
         'thmp': np.array(rs_thmp),
-        'lcb': np.array(rs_lcb),
+        'linreg': np.array(rs_linreg),
     }    
     baselines_means = {k: np.mean(v) for k, v in baselines.items()}
     colors = plt.cm.viridis(np.linspace(0, 1, len(baselines_means)))
@@ -301,32 +286,50 @@ def offline(eval_trajs, model, n_eval, horizon, var, bandit_type):
     return baselines
 
 
-def offline_graph(eval_trajs, model, n_eval, horizon, var, bandit_type):
-    horizons = np.linspace(1, horizon, 50, dtype=int)
+def offline_graph(eval_trajs, model, n_eval, horizon, var):
+    horizons = np.linspace(1, horizon, horizon, dtype=int)
 
     all_means = []
     all_sems = []
+
+    all_subopt_means = []
+    all_subopt_sems = []
     for h in horizons:
         config = {
             'horizon': h,
             'var': var,
             'n_eval': n_eval,
-            'bandit_type': bandit_type,
         }
         config['horizon'] = h
         baselines = offline(eval_trajs, model, **config)
         plt.clf()
 
+        subopt = {k: baselines['opt'] - v for k, v in baselines.items()}
+        subopt_means = {k: np.mean(v) for k, v in subopt.items()}
+        subopt_sems = {k: scipy.stats.sem(v) for k, v in subopt.items()}
+
         means = {k: np.mean(v, axis=0) for k, v in baselines.items()}
         sems = {k: scipy.stats.sem(v, axis=0) for k, v in baselines.items()}
+        
         all_means.append(means)
+        all_sems.append(sems)
+        all_subopt_means.append(subopt_means)
+        all_subopt_sems.append(subopt_sems)
+
+    all_subopt_means = np.array(all_subopt_means)
+    all_subopt_sems = np.array(all_subopt_sems)
 
 
     for key in means.keys():
         if not key == 'opt':
-            regrets = [all_means[i]['opt'] - all_means[i][key] for i in range(len(horizons))]            
-            plt.plot(horizons, regrets, label=key)
-            plt.fill_between(horizons, regrets - sems[key], regrets + sems[key], alpha=0.2)
+            subopt_mean = [all_subopt_means[i][key] for i in range(len(horizons))]
+            subopt_sem = [all_subopt_sems[i][key] for i in range(len(horizons))]
+            subopt_mean = np.array(subopt_mean)
+            subopt_sem = np.array(subopt_sem)
+
+            plt.plot(horizons, subopt_mean, label=key)
+            plt.fill_between(horizons, subopt_mean - subopt_sem, subopt_mean + subopt_sem, alpha=0.2)
+
 
     plt.legend()
     plt.yscale('log')

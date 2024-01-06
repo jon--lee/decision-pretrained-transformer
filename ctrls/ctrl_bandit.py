@@ -3,6 +3,7 @@ import itertools
 import numpy as np
 import scipy
 import torch
+from IPython import embed
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -185,7 +186,7 @@ class ThompsonSamplingPolicy(Controller):
 
         if n > 0:
             arm_mean = np.mean(arm_rewards)
-            prior_weight = self.prior_variance / (self.prior_variance + (n * self.variance))
+            prior_weight = self.variance / (self.variance + (n * self.prior_variance))
             new_mean = prior_weight * self.prior_mean + (1 - prior_weight) * arm_mean
             new_variance = 1 / (1 / self.prior_variance + n / self.variance)
 
@@ -193,7 +194,7 @@ class ThompsonSamplingPolicy(Controller):
             self.variances[c] = new_variance
 
     def update_posterior_all(self, arm_means):
-        prior_weight = self.prior_variance / (self.prior_variance + (self.counts * self.variance))
+        prior_weight = self.variance / (self.variance + (self.counts * self.prior_variance))
         new_mean = prior_weight * self.prior_mean + (1 - prior_weight) * arm_means
         new_variance = 1 / (1 / self.prior_variance + self.counts / self.variance)
 
@@ -443,59 +444,88 @@ class BanditTransformerController(Controller):
         return actions
 
 
-class LinUCB(OptPolicy):
-    def __init__(self, env, k, const=1.0):
+class LinUCBPolicy(OptPolicy):
+    def __init__(self, env, const=1.0, batch_size=1):
         super().__init__(env)
         self.rand = True
-        self.t = 0
-        self.k = k
-        self.theta = np.zeros(self.env.dim)
-        self.cov = 1.0 * np.eye(self.env.dim)
         self.const = const
+        self.arms = env.arms
+        self.d = self.arms.shape[1]
+        self.dim = env.dim
+        self.theta = np.zeros(self.d)
+        self.init_cov = 1.0 * np.eye(self.d)
+        self.batch_size = batch_size
 
     def act(self, x):
-        if len(self.batch['context_rewards'][0]) < 1:
-            hot_vector = np.zeros(self.env.dim)
-            indices = np.random.choice(
-                self.env.dim, size=self.env.k, replace=False)
-            hot_vector[indices] = 1
-            self.t += 1
+        if len(self.batch['rollin_rs'][0]) < 1:
+            i = np.random.choice(np.arange(self.dim))
+            hot_vector = np.zeros(self.dim)
+            hot_vector[i] = 1
             return hot_vector
-        else:
-            actions = self.batch['context_actions'].cpu().detach().numpy()[0]
-            rewards = self.batch['context_rewards'].cpu(
-            ).detach().numpy().flatten()
 
-            cov = self.cov + actions.T @ actions
+        else:
+            actions = self.batch['rollin_us'].cpu().detach().numpy()[0]
+            rewards = self.batch['rollin_rs'].cpu().detach().numpy().flatten()
+
+            actions_indices = np.argmax(actions, axis=1)
+            actions_arms = self.arms[actions_indices]
+
+            cov = self.init_cov + actions_arms.T @ actions_arms
             cov_inv = np.linalg.inv(cov)
 
-            theta = cov_inv @ actions.T @ rewards
+            theta = cov_inv @ actions_arms.T @ rewards
 
-            if self.const == 0:
-                indices = np.argsort(theta)[::-1][:self.k]
-                self.a = np.zeros(self.env.dim)
-                self.a[indices] = 1.0
-                return self.a
-            else:
-                k_hot_vectors = generate_k_hot_vectors(self.env.dim, self.k)
-                best_arm = None
-                best_value = -np.inf
-                for a in k_hot_vectors:
-                    value = theta @ a + self.const * np.sqrt(a @ cov_inv @ a)
-                    if value > best_value:
-                        best_value = value
-                        best_arm = a
+            best_arm_index = None
+            best_value = -np.inf
+            for i, arm in enumerate(self.arms):
+                value = theta @ arm + self.const * np.sqrt(arm @ cov_inv @ arm)
+                if value > best_value:
+                    best_value = value
+                    best_arm_index = i
 
-                self.a = best_arm
-                return self.a
+            hot_vector = np.zeros(self.dim)
+            hot_vector[best_arm_index] = 1
+            self.a = hot_vector
+            return hot_vector
+
+    def act_numpy_vec(self, x):
+        # TODO: parallelize this later
+        actions_batch = self.batch['context_actions']
+        rewards_batch = self.batch['context_rewards']
+
+        if len(rewards_batch[0]) < 1:
+            indices = np.random.choice(np.arange(self.dim), size=self.batch_size)
+            hot_vectors = np.zeros((self.batch_size, self.dim))
+            hot_vectors[np.arange(self.batch_size), indices] = 1
+            return hot_vectors
+
+        hot_vectors = []
+        for i in range(self.batch_size):
+            actions = actions_batch[i]
+            rewards = rewards_batch[i]
+            
+            actions_indices = np.argmax(actions, axis=1)
+            actions_arms = self.arms[actions_indices]
+
+            cov = self.init_cov + actions_arms.T @ actions_arms
+            cov_inv = np.linalg.inv(cov)
+
+            theta = cov_inv @ actions_arms.T @ rewards
+            theta = theta.flatten()
+
+            best_arm_index = None
+            best_value = -np.inf
+            for i, arm in enumerate(self.arms):
+                value = theta @ arm + self.const * np.sqrt(arm @ cov_inv @ arm)
+                if value > best_value:
+                    best_value = value
+                    best_arm_index = i
+
+            hot_vector = np.zeros(self.dim)
+            hot_vector[best_arm_index] = 1
+            hot_vectors.append(hot_vector)
+
+        return np.array(hot_vectors)
 
 
-def generate_k_hot_vectors(n, k):
-    indices = range(n)
-    k_hot_vectors = []
-    for combination in itertools.combinations(indices, k):
-        k_hot_vector = [0] * n
-        for index in combination:
-            k_hot_vector[index] = 1
-        k_hot_vectors.append(k_hot_vector)
-    return np.array(k_hot_vectors)
+

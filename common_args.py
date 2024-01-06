@@ -12,10 +12,14 @@ def add_dataset_args(parser):
                         default=100, help="Context horizon")
     parser.add_argument("--dim", type=int, required=False,
                         default=10, help="Dimension")
+    parser.add_argument("--lin_d", type=int, required=False,
+                        default=2, help="Linear feature dimension")
+
     parser.add_argument("--var", type=float, required=False,
                         default=0.0, help="Bandit arm variance")
     parser.add_argument("--cov", type=float, required=False,
                         default=0.0, help="Coverage of optimal arm")
+
     parser.add_argument("--env", type=str, required=True, help="Environment")
     parser.add_argument("--env_id_start", type=int, required=False,
                         default=-1, help="Start index of envs to sample")

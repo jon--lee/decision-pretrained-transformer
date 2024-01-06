@@ -11,3 +11,4 @@ out/
 __pycache__
 *.pt
 *.pkl
+datasets*
